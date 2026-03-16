@@ -2,7 +2,7 @@
 // @name         Bumble Auto Swipe
 // @namespace    https://github.com/qhungbui7/swipe
 // @version      2.0.0
-// @build        2026-03-16 18:05
+// @build        2026-03-16 18:15
 // @description  Automatically swipe right on Bumble with configurable delay and like ratio
 // @author       qhungbui7
 // @match        https://bumble.com/*
@@ -117,14 +117,14 @@
   }
 
   function clickElement(el) {
-    // Try React handlers in priority order (Bumble uses pointer/mouse down for swipe detection)
-    const fired = fireReactHandler(el, 'onPointerDown', 'onMouseDown', 'onClick', 'onTouchStart');
-    if (fired) return;
-    // Final fallback: native events
-    console.log('[BAS] no React handler found, using native events');
-    ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(type =>
-      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
-    );
+    // Dispatch real native events — React 17 root listener on #main catches these
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+      el.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, view: window,
+        clientX: el.getBoundingClientRect().left + el.offsetWidth  / 2,
+        clientY: el.getBoundingClientRect().top  + el.offsetHeight / 2,
+      }));
+    });
   }
 
   function updateUI() {
@@ -295,7 +295,7 @@
     }
   });
 
-  console.log('[BAS] Bumble Auto-Swipe v2 loaded ✓  (build 2026-03-16 17:52)');
+  console.log('[BAS] Bumble Auto-Swipe v2 loaded ✓  (build 2026-03-16 18:15)');
   tryInject();
 
 })();

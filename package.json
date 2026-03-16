@@ -1,0 +1,12 @@
+{
+  "name": "bumble-autoswipe",
+  "version": "1.0.0",
+  "description": "Bumble auto-swipe using Playwright (real trusted input events)",
+  "main": "swipe.js",
+  "scripts": {
+    "start": "node swipe.js"
+  },
+  "dependencies": {
+    "playwright": "^1.42.0"
+  }
+}
