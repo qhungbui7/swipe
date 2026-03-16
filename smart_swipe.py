@@ -23,17 +23,18 @@ LOGS_DIR  = ROOT / "logs"
 MODEL_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 os.environ["OLLAMA_MODELS"]     = str(MODEL_DIR)
-os.environ["OLLAMA_KEEP_ALIVE"] = "60s"  # unload model after 60s idle → frees ~2 GB
+os.environ["OLLAMA_KEEP_ALIVE"] = "30s"  # unload model after 30s idle → frees ~3 GB
 os.environ["OLLAMA_METAL"]      = "1"    # force Metal GPU backend on Apple Silicon
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CHROME_PROFILE = "/Users/qhungbui7/Library/Application Support/Google/Chrome/Default"
 
-# qwen2.5vl:3b → 2.3 GB, SOTA accuracy, recommended  ← default
-# qwen2.5vl:7b → 5.0 GB, most accurate, heavier
-# moondream    → 1.8 GB, fastest but poor at body type judgment
-VLM_MODEL   = "qwen2.5vl:3b"
-VLM_MAX_PX  = 336   # smaller image = fewer tokens = less RAM (was 512)
+# qwen3-vl:4b  → ~3.0 GB, newest SOTA (Oct 2025), best accuracy  ← default
+# qwen3-vl:2b  → ~1.8 GB, faster but weaker
+# qwen3-vl:8b  → ~5.5 GB, most accurate, heavier on RAM
+# qwen2.5vl:3b → ~2.3 GB, previous gen, still decent
+VLM_MODEL   = "qwen3-vl:4b"
+VLM_MAX_PX  = 512   # px — enough detail for body/face assessment
 
 # M4 Air safety limits
 MAX_CPU_PCT = 90    # raised — M4 handles sustained load fine
@@ -58,20 +59,25 @@ Respond with exactly this format (one line):
   or
   PASS <confidence 0-100> | <short explanation>
 
-LIKE if:
-  - The person is NOT visibly overweight or obese
+LIKE if ALL of these are true:
+  - The person appears to be female (woman/girl)
+  - NOT visibly overweight or obese
   - Bonus (raise confidence): nerdy/intellectual vibe — glasses, books, lab/study
     setting, anime merch, coding, science references, university look
 
-PASS only if:
+PASS if ANY of these are true:
+  - The person appears to be male (man/boy) — this is an absolute dealbreaker
   - The person is visibly overweight or obese
   - No person visible in the photo at all
+  - Cannot determine gender
 
 Examples:
-  LIKE 92 | Slim build, glasses, bookshelf in background.
-  LIKE 75 | Average build, nothing concerning.
-  PASS 90 | Visibly overweight body type.
-  PASS 80 | No person visible in photo.
+  LIKE 92 | Female, slim build, glasses, bookshelf in background.
+  LIKE 75 | Female, average build, nothing concerning.
+  PASS 98 | Appears to be male.
+  PASS 90 | Female but visibly overweight.
+  PASS 85 | No person visible in photo.
+  PASS 80 | Cannot determine gender from photo.
 """.strip()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -233,27 +239,76 @@ def scrape_profile_text(page) -> str:
                 pass
     return "\n".join(dict.fromkeys(snippets))
 
+def _crop_and_resize(raw: bytes) -> bytes:
+    img = Image.open(io.BytesIO(raw))
+    img.thumbnail((VLM_MAX_PX, VLM_MAX_PX), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+def screenshot_photo_area(page) -> bytes | None:
+    """
+    Capture only the photo portion of the card (top 62 %).
+    Bumble cards: top ~60% is the photo, bottom 40% is bio + buttons.
+    Cropping out the bio/buttons gives the model a cleaner, larger face/body view.
+    """
+    box = get_card_box(page)
+    if not box:
+        return None
+    # Small wait so any card transition animation has finished
+    time.sleep(0.25)
+    photo_height = box["height"] * 0.62
+    raw = page.screenshot(clip={
+        "x":      box["x"],
+        "y":      box["y"],
+        "width":  box["width"],
+        "height": photo_height,
+    })
+    return _crop_and_resize(raw)
+
 def screenshot_card(page) -> bytes | None:
+    """Full card screenshot used for debug image saving."""
     box = get_card_box(page)
     if not box:
         return None
     raw = page.screenshot(clip={"x": box["x"], "y": box["y"],
                                  "width": box["width"], "height": box["height"]})
-    img = Image.open(io.BytesIO(raw))
-    img.thumbnail((VLM_MAX_PX, VLM_MAX_PX), Image.LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=82)
-    return buf.getvalue()
+    return _crop_and_resize(raw)
 
 
 # ── AI evaluation ─────────────────────────────────────────────────────────────
 _infer_lock = threading.Lock()
 
+def _grab_two_shots(page) -> list[bytes]:
+    """
+    Grab photo-area screenshot, tap to next photo, grab again.
+    Gives the model two different angles/poses for a better judgment.
+    """
+    shots = []
+    shot1 = screenshot_photo_area(page)
+    if shot1:
+        shots.append(shot1)
+
+    # tap right side of card to advance to next photo
+    box = get_card_box(page)
+    if box:
+        card_tap(page,
+                 box["x"] + box["width"]  * random.uniform(0.65, 0.88),
+                 box["y"] + box["height"] * random.uniform(0.15, 0.50))
+        time.sleep(0.4)
+        shot2 = screenshot_photo_area(page)
+        if shot2:
+            shots.append(shot2)
+
+    return shots
+
 def ai_evaluate(page) -> tuple[bool, int, str, bytes | None]:
     """Returns (should_like, confidence, explanation, img_bytes)."""
-    img_bytes    = screenshot_card(page)
     profile_text = scrape_profile_text(page)
-    if not img_bytes:
+    shots        = _grab_two_shots(page)   # 1–2 photo crops
+    debug_img    = screenshot_card(page)   # full card for debug overlay
+
+    if not shots:
         return random.random() < 0.85, 50, "no screenshot — fallback", None
 
     check_health("pre-inference")
@@ -264,18 +319,23 @@ def ai_evaluate(page) -> tuple[bool, int, str, bytes | None]:
         try:
             resp = ollama.chat(
                 model=VLM_MODEL,
-                messages=[{"role": "user", "content": prompt, "images": [img_bytes]}],
+                messages=[{"role": "user", "content": prompt, "images": shots}],
                 options={
-                    "num_predict": 40,   # enough for decision + explanation
-                    "num_ctx":     256,  # tiny context window → small KV cache
-                    "num_gpu":     999,  # offload ALL layers to Metal GPU (Apple Silicon)
-                    "num_thread":  4,    # CPU threads for non-GPU work
+                    "num_predict": 1024,
+                    "num_ctx":     1024,
+                    "num_gpu":     999,  # Metal GPU on Apple Silicon
+                    "num_thread":  4,
                     "temperature": 0.0,
                 },
             )
             raw = resp["message"]["content"].strip()
+            # extract and print thinking, then strip for parsing
+            think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
+            if think_m:
+                print(f"\n  [thinking] {think_m.group(1).strip()[:200]}", flush=True)
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         except Exception as e:
-            return random.random() < 0.85, 0, f"AI error: {e}", img_bytes
+            return random.random() < 0.85, 0, f"AI error: {e}", debug_img
 
     check_health("post-inference")
 
@@ -283,11 +343,10 @@ def ai_evaluate(page) -> tuple[bool, int, str, bytes | None]:
     m = re.match(r"^(LIKE|PASS)\s+(\d+)\s*\|?\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
     if m:
         label, conf, expl = m.groups()
-        return label.upper() == "LIKE", int(conf), expl.strip()[:120], img_bytes
+        return label.upper() == "LIKE", int(conf), expl.strip()[:120], debug_img
 
-    # fallback: just check first word
     like = raw.upper().startswith("LIKE")
-    return like, 50, raw[:120], img_bytes
+    return like, 50, raw[:120], debug_img
 
 
 # ── Profile viewing ───────────────────────────────────────────────────────────
@@ -369,13 +428,14 @@ def main():
     logger = Logger(debug=args.debug)
     liked = passed = 0
 
-    def print_status(conf, expl):
+    def print_status(conf, expl, decision):
         cpu = psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory().percent
         bar = "█" * (conf // 10) + "░" * (10 - conf // 10)
-        print(f"\r  ✓{liked:>4} ✗{passed:>4}  [{bar}] {conf:>3}%  "
-              f"CPU {cpu:>2.0f}% MEM {mem:>2.0f}%  {expl[:40]:<40}",
-              end="", flush=True)
+        label = "LIKE" if decision else "PASS"
+        print(f"\n  {label} [{bar}] {conf:>3}%  CPU {cpu:>2.0f}% MEM {mem:>2.0f}%"
+              f"  ✓{liked:>4} ✗{passed:>4}"
+              f"\n  → {expl}", flush=True)
 
     with sync_playwright() as p:
         try:
@@ -416,7 +476,7 @@ def main():
 
                 view_profile(page)
 
-                if should_like and like.is_visible():
+                if should_like and conf > 20 and like.is_visible():
                     human_click(page, like); liked += 1
                 elif dislike.is_visible():
                     human_click(page, dislike); passed += 1
@@ -424,7 +484,7 @@ def main():
                     time.sleep(1); continue
 
                 logger.record(should_like, conf, expl, profile_text, img_bytes)
-                print_status(conf, expl)
+                print_status(conf, expl, should_like)
                 pacer.tick()
                 time.sleep(human_delay())
 

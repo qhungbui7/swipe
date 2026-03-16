@@ -96,18 +96,20 @@ Screenshots of every evaluated profile are saved to `cache/screens/` as timestam
 
 ## Model options
 
-All models are **open-source** and run fully offline after the initial download.
+All models are **open-source** (Apache 2.0) and run fully offline after the initial download.
 
 | Model | Size | Speed (M4) | Notes |
 |---|---|---|---|
-| `qwen2.5vl:3b` | 2.3 GB | ~2–3 s/image | **default** — best balance, strong gender/body understanding |
-| `qwen2.5vl:7b` | 5.0 GB | ~5–8 s/image | more accurate, needs more RAM |
-| `moondream` | 1.8 GB | ~1–2 s/image | fastest, weaker on body/gender |
+| `qwen3-vl:4b` | ~3.0 GB | ~3–4 s/image | **default** — newest SOTA (Oct 2025), best body/face analysis |
+| `qwen3-vl:2b` | ~1.8 GB | ~1–2 s/image | faster, weaker reasoning |
+| `qwen3-vl:8b` | ~5.5 GB | ~6–9 s/image | most accurate, heavy on RAM |
+| `qwen2.5vl:3b` | ~2.3 GB | ~2–3 s/image | previous gen, decent fallback |
+| `moondream` | ~1.8 GB | ~1–2 s/image | avoid — poor at body type judgment |
 
 To switch models, change `VLM_MODEL` in `smart_swipe.py` and pull it first:
 
 ```bash
-OLLAMA_MODELS=./models ollama pull qwen2.5vl:7b
+OLLAMA_MODELS=./models ollama pull qwen3-vl:4b
 ```
 
 ---

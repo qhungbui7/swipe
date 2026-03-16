@@ -32,9 +32,9 @@ if ! pgrep -x ollama &>/dev/null; then
   sleep 3
 fi
 
-# Pull the vision model — qwen2.5vl:3b is SOTA and only 500 MB more than moondream
-echo "📥 Pulling qwen2.5vl:3b vision model (2.3 GB)…"
-OLLAMA_MODELS="$DIR/models" ollama pull qwen2.5vl:3b
+# Pull the vision model — qwen3-vl:4b is the newest SOTA (Oct 2025)
+echo "📥 Pulling qwen3-vl:4b vision model (~3.0 GB)…"
+OLLAMA_MODELS="$DIR/models" ollama pull qwen3-vl:4b
 
 echo ""
 echo "✅  Setup complete!"
