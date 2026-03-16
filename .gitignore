@@ -1,4 +1,12 @@
-# Byte-compiled / optimized / DLL files
+# ── Project-specific ──────────────────────────────────────────────────────────
+# Ollama model weights (~2+ GB, never commit)
+models/
+# session logs and debug screenshots
+logs/
+# intermediate screenshot cache
+cache/
+
+# ── Byte-compiled / optimized / DLL files ─────────────────────────────────────
 __pycache__/
 *.py[codz]
 *$py.class

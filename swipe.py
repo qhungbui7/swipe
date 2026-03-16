@@ -1,7 +1,8 @@
 """
 Bumble Auto-Swipe — human-behaviour simulation
-Run:  pip install playwright && playwright install chrome
-      python swipe.py
+Run:
+  source /Users/qhungbui7/workspace/env/sandbox/bin/activate
+  python swipe.py
 """
 
 import time, random, math
